@@ -5,7 +5,7 @@ import voluptuous as vol
 
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
-from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_PLATFORM
+from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_PLATFORM, CONF_SCAN_INTERVAL
 from homeassistant.helpers import discovery
 from homeassistant.helpers.dispatcher import dispatcher_send, async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
@@ -32,6 +32,7 @@ TUYA_TYPE_TO_HA = {
     "scene": "scene",
     "switch": "switch",
 }
+DEFAULT_SCAN_INTERVAL = timedelta(seconds=20)
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -41,6 +42,9 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Required(CONF_USERNAME): cv.string,
                 vol.Required(CONF_COUNTRYCODE): cv.string,
                 vol.Optional(CONF_PLATFORM, default="tuya"): cv.string,
+                vol.Optional(
+                    CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
+                ): cv.time_period,
             }
         )
     },
@@ -57,6 +61,7 @@ def setup(hass, config):
     password = config[DOMAIN][CONF_PASSWORD]
     country_code = config[DOMAIN][CONF_COUNTRYCODE]
     platform = config[DOMAIN][CONF_PLATFORM]
+    scan_interval = config[DOMAIN][CONF_SCAN_INTERVAL]
 
     hass.data[DATA_TUYA] = tuya
     tuya.init(username, password, country_code, platform)
@@ -82,6 +87,10 @@ def setup(hass, config):
     device_list = tuya.get_all_devices()
     load_devices(device_list)
 
+    def refresh(event_time):
+        """Get the latest data from tuya."""
+        dispatcher_send(hass, SIGNAL_UPDATE_ENTITY)
+
     def poll_devices_update(event_time):
         """Check if accesstoken is expired and pull device list from server."""
         _LOGGER.debug("Pull devices from Tuya.")
@@ -99,7 +108,7 @@ def setup(hass, config):
                 hass.data[DOMAIN]["entities"].pop(dev_id)
 
     track_time_interval(hass, poll_devices_update, timedelta(minutes=5))
-
+    track_time_interval(hass, refresh, scan_interval)
     hass.services.register(DOMAIN, SERVICE_PULL_DEVICES, poll_devices_update)
 
     def force_update(call):
